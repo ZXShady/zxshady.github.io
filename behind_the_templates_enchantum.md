@@ -1,3 +1,9 @@
+
+What is a today's article without a dumb awful ai generated image?
+
+![Very Angry man for waiting too long to compile his files due to slow enum reflection](./dumbpics/angry_man_for_slow_cpp_compiling_due_to_enum_reflection.jpg)
+
+
 A while ago, I found myself wanting a C++ way to reflect over enums — converting them to strings and back, iterating over their values, and doing all of it at compile-time, then I found magic_enum which did it well.
 
 magic_enum is amazing, however it has one main issue, it is slow to compile. I wanted something lighter and faster to compile. So I created enchantum, a header-only C++20 library for enum reflection. Here's how it works under the hood — no macros, no magic — just some carefully wielded compiler quirks and constexpr wizardry.
