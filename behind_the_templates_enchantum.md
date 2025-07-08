@@ -205,7 +205,7 @@ constexpr auto entries = [](){
             // Fruit::Apple]
             std::size_t pos = table[i].find("::") + 2; // skip the colons
             auto& [enum_value,string] = entries_return[entry_index]; // structured bindings for readability
-            enum_value = static_cast<E>(i + Min);
+            enum_value = static_cast<E>(i + Min); // adjust the range from [0,size()] to [Min,size()+Min]
             string = table[i].substr(pos);
             ++entry_index;
         }
@@ -272,7 +272,6 @@ How can we fix this? Well lets see the core issue we have, the expensive part is
 Can we reduce the required instantations? Yes we can why don't we try to print multiple template parameters?
 
 ```cpp
-
 template <auto... Vs> // now variadic
 constexpr std::string_view signature() {
     return __PRETTY_FUNCTION__;
@@ -289,7 +288,6 @@ std::string_view signature() [Vs = <0, 1, 2, 3, 4, 5, 6, 7>]
 ```
 
 
-
 The main advantage is that we *only* instantaited a single template this is great for compile time speed
 
 Lets prettify it for easier handling.
@@ -303,11 +301,193 @@ constexpr std::string_view signature() {
 }
 ```
 
+Lets change our `string_table` to instead be a single `std::string_view`
+
+```cpp
+template<typename E>
+constexpr auto string_table = []<std::size_t...Idx>(std::index_sequence<Idx...>)
+{
+    return signature<static_cast<E>(Idx+Min)...>();
+}(std::make_index_sequence<Max-Min+1>{});
+```
 
 
+Now lets try to parse this it is more complicated due to the fact we don't know the end of the string it is more convulated.
+
+Printing the single string out gives us.
+
+`(Fruit)-5, (Fruit)-4, (Fruit)-3, (Fruit)-2, (Fruit)-1, (Fruit)0, Fruit::Apple, Fruit::Banana, (Fruit)3, Fruit::Pear, (Fruit)5`
+
+Let's try to figure out a way to parse it.
+By observing it: the values are seperated by commas followed by a space we can use that as the end of the enum name.
 
 
+```cpp
+// Constexpr std::strlen used to remove magic numbers
+template<std::size_t N>
+constexpr std::size_t c_strlen(const char(&)[N]) {
+    return N-1;
+}
+
+template<typename E>
+constexpr auto entries = [](){
+    
+    // first get the minimal size we need to store all the entries
+    constexpr auto minimal_size = [](){
+        std::size_t count = 0;
+         std::string_view s = string_table<E>;
+         while (!s.empty()) {
+             const auto pos = s.find(',');
+             if(s.front() != '(') // if it is not a cast
+                 ++count;
+             if(pos == s.npos) // if we did not find a comma it is the last element
+                 break;
+             s.remove_prefix(pos + c_strlen(", ")); // move past ','
+         }
+         return count;
+    }();
+
+    // second use it to be the array length
+    std::array<std::pair<E,std::string_view>,minimal_size> entries_return{};
+    std::size_t entry_index =0;
+    std::string_view s = string_table<E>;
+    for (int curr_enum_val = Min;!s.empty();++curr_enum_val) {
+        const auto commapos = s.find(',');
+        // if it is not a cast
+        if(s.front() != '(')
+        {
+           auto& [enum_value,string] = entries_return[entry_index];
+           enum_value = static_cast<E>(curr_enum_val);
+           std::string_view name = s.substr(s.find("::") + c_strlen("::"));
+           string = name.substr(0,name.find(',')); //if there is no comma found then we take the rest of the string.
+           ++entry_index;
+        }
+        if(commapos == s.npos) // if we did not find a comma it is the last element
+            break;
+        s.remove_prefix(commapos + c_strlen(", ")); // move past ','
+    }
+    return entries_return;
+}();
+```
+
+trying it out on [godbolt](https://godbolt.org/z/o6GeK51af) correctly works but however there is an issue if we look at the binary.
+
+```cpp
+.L.str.1:
+  .asciz "std::string_view signature() [Vs = <(Fruits)-5, (Fruits)-4, (Fruits)-3, (Fruits)-2, (Fruits)-1, Fruits::Banana, Fruits::Pear, (Fruits)2, (Fruits)3, Fruits::Apple, (Fruits)5>]"
+```
+
+although we only need to store `"Banana"`,`"Pear"`,`"Apple"` we get the entire string stored this is bad for binary sizes and is bloating our binary, how can we fix this?
+
+# Trimming strings
+
+We can store the required strings in a global static storage constexpr variable and thanks to CNNTP (class non type template parameters)
+it makes it really easy to do so.
 
 
+```cpp
+template<auto Value>
+constexpr auto static_storage_for = Value;
 
-`<(Fruit)-5, (Fruit)-4, (Fruit)-3, (Fruit)-2, (Fruit)-1, (Fruit)0, Fruit::Apple, Fruit::Banana, (Fruit)3, Fruit::Pear, (Fruit)5>]`
+template<typename E>
+constexpr auto entries_optimized = [](){
+    // first get the required length for storing all strings
+    constexpr auto total_string_length = [](){
+        std::size_t count = 0;
+        for(auto [e,s] : entries<E>)
+            count += s.size();
+        return count;
+    }();
+    // second group the strings into a single array
+    constexpr auto grouped_strings = [total_string_length](){
+        std::array<char,total_string_length> strings{};
+        for(std::size_t i =0;auto [e,s] : entries<E>) {
+            s.copy(strings.data()+i,s.size());
+            i += s.size();
+        }
+        return strings;
+    }();
+    // third make grouped_strings have static storage by making a constexpr global variable
+    // copy its value since we don't have static constexpr local variables in constexpr functions until C++26
+    constexpr auto& storage = static_storage_for<grouped_strings>;
+
+    // fourth make the new entries point to that storage we created
+    auto fixed_entries = entries<E>;
+    for (std::size_t offset = 0;auto& [e, s] : fixed_entries) {
+        s = {storage.data() + offset, s.size()};
+        offset += s.size();
+    }
+    return fixed_entries;
+}();
+```
+
+Now looking at the binary we get this instead
+
+```cpp
+static_storage_for<std::array<char, 15ul>{"BananaPearApple"}>:
+  .ascii "BananaPearApple"
+```
+
+much much better and more optimized. only 15 bytes needed instead of whatever previously was needed
+
+Let's assume that for some reason your `i` key on your keyboard is broken that means sadly that you can't spell out `.size()` member function so you have to resort to `std::strlen` which does not contain `i` 
+
+```cpp
+for(auto [e,s] : entries<E>)
+{
+   std::cout << std::strlen(s.data());
+}
+```
+
+surprisingly it does not work, because our strings are not null terminated the fix is simple.
+
+# Null Termination
+
+We modify total_string_length and other local functions to accomdate for the space the null terminator needs 
+
+```cpp
+template<typename E>
+constexpr auto entries_optimized = [](){
+    // first get the required length for storing all strings
+    constexpr auto total_string_length = [](){
+        std::size_t count = 0;
+        for(auto [e,s] : entries<E>)
+            count += s.size();
+        // each string required a null terminator
+        return count + entries<E>.size();
+    }();
+    // second group the strings into a single array
+    constexpr auto grouped_strings = [total_string_length](){
+        // The array is initialized to zero (the null terminator)
+        // the gaps we skip is filled with them automaticly.
+        std::array<char,total_string_length> strings{};
+        for(std::size_t i =0;auto [e,s] : entries<E>) {
+            s.copy(strings.data()+i,s.size());
+            
+            i += s.size() + c_strlen("\0"); // past null terminator
+        }
+        return strings;
+    }();
+    // third make grouped_strings have static storage by making a constexpr global variable
+    // copy its value since we don't have static constexpr local variables in constexpr functions until C++26
+    constexpr auto& storage = static_storage_for<grouped_strings>;
+
+    // fourth make the new entries point to that storage we created
+    auto fixed_entries = entries<E>;
+    for (std::size_t offset = 0;auto& [e, s] : fixed_entries) {
+        s = {storage.data() + offset, s.size()};
+        offset += s.size() + 1;
+    }
+    return fixed_entries;
+}();
+```
+
+Looking at the assembely we see
+
+```cpp
+static_storage_for<std::array<char, 18ul>{"Banana\0Pear\0""Apple"}>:
+  .asciz "Banana\000Pear\000Apple"
+```
+
+much better and yes the "Apple" is null terminated but it does not show up here as you can see from the array size being 18 it means 3 null terminators were added.
+
