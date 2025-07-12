@@ -27,11 +27,11 @@ Obviously... no.
 
 # Compiler Signature Hacking
 
-Just like magic_enum, enchantum relies on the same trick: compiler-specific builtins like `__PRETTY_FUNCTION__` and `__FUNCSIG__`. These include the full function signature which includes the template parameters at compile time, which we can abuse for our advantage.
+Just like magic_enum, enchantum relies on the same trick: compiler-specific builtins like `__PRETTY_FUNCTION__` for gcc and clang and `__FUNCSIG__` for msvc. These include the full function signature which includes the template parameters at compile time, which we can abuse for our advantage.
 
 ```cpp
 template <auto V>
-constexpr std::string_view signature() {
+constexpr auto signature() {
 #if defined(__clang__) || defined(__GNUC__)
     return __PRETTY_FUNCTION__;
 #elif defined(_MSC_VER)
@@ -39,19 +39,26 @@ constexpr std::string_view signature() {
 #endif
 }
 ```
-The output however is compiler dependant I will be using clang as it is the simplest.
+The output however is compiler dependant.
 
 ```cpp
 std::cout << signature<0>();
 std::cout << signature<Fruit::Banana>();
 ```
 
-```
-std::string_view signature() [V = 0]
-std::string_view signature() [V = Fruit::Banana]
-```
+| Compiler | `signature<0>`               | `signature<Fruit::Banana>`              |
+|----------|------------------------------|-----------------------------------------|
+|  Clang   | "auto signature() [V = 0]" | auto signature() [V = Fruits::Banana]   |
+|  GCC     | "constexpr auto signature() [with auto V = 0]" | "constexpr auto signature() [with auto V = Fruits::Banana]"  |
+|  MSVC    | "auto __cdecl signature\<0x0\>(void)" | "auto __cdecl signature\<Fruits::Banana\>(void)"   |
 
-Hooray! we got our strings, what happens if we input an invalid enum member in `signature` template parameter?
+
+
+I will be using clang as it is the simplest.
+
+As you can see from the compiler output every time an enum is placed in the template parameter you get a the enumerator name.
+
+What happens if we input an invalid enum member in `signature` template parameter?
 
 ```cpp
 std::cout << signature<static_cast<Fruit>(5)>();
@@ -59,7 +66,7 @@ std::cout << signature<static_cast<Fruit>(5)>();
 
 Outputs
 ```
-std::string_view signature() [V = (Fruit)5]
+auto signature() [V = (Fruit)5]
 ```
 
 
@@ -109,8 +116,8 @@ Let’s update the signature function to clean the output:
 
 ```cpp
 template <auto V>
-constexpr std::string_view signature() {
-    auto sig = std::string_view(__PRETTY_FUNCTION__ + std::string_view("std::string_view signature() [V = ").size());
+constexpr auto signature() {
+    auto sig = std::string_view(__PRETTY_FUNCTION__ + std::string_view("auto signature() [V = ").size());
     sig.remove_suffix(1); // remove ']'
     return sig;
 }
@@ -279,7 +286,7 @@ Can we reduce the required instantations? Yes we can why don't we try to print m
 
 ```cpp
 template <auto... Vs> // now variadic
-constexpr std::string_view signature() {
+constexpr auto signature() {
     return __PRETTY_FUNCTION__;
 }
 ```
@@ -300,8 +307,8 @@ Lets prettify it for easier handling.
 
 ```cpp
 template <auto... Vs> // now variadic
-constexpr std::string_view signature() {
-    auto sig = std::string_view(__PRETTY_FUNCTION__ + std::string_view("std::string_view signature() [Vs = <").size());
+constexpr auto signature() {
+    auto sig = std::string_view(__PRETTY_FUNCTION__ + std::string_view("auto signature() [Vs = <").size());
     sig.remove_suffix(2); // remove '>]'
     return sig;
 }
@@ -497,3 +504,13 @@ static_storage_for<std::array<char, 18ul>{"Banana\0Pear\0""Apple"}>:
 
 much better and yes the "Apple" is null terminated but it does not show up here as you can see from the array size being 18 it means 3 null terminators were added.
 
+# End
+
+This is a simplified implementation of enchantum logic, this implementation does not currently handle
+
+1. Namespaced enums or enums in classes
+2. C style enums
+
+Here is final code
+
+[godbolt](https://godbolt.org/z/cxjdTdzaj)
