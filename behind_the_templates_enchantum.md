@@ -4,9 +4,11 @@ What is a today's article without a dumb awful ai generated image?
 ![Very Angry man for waiting too long to compile his files due to slow enum reflection](./dumbpics/angry_man_for_slow_cpp_compiling_due_to_enum_reflection.jpg)
 
 
-A while ago, I found myself wanting a C++ way to reflect over enums — converting them to strings and back, iterating over their values, and doing all of it at compile-time, then I found magic_enum which did it well.
+A while ago, I found myself wanting a C++ way to reflect over enums — converting them to strings and back, iterating over their values, and doing all of it at compile-time, then I found [magic_enum](https://github.com/Neargye/magic_enum) which did it well.
 
-magic_enum is amazing, however it has one main issue, it is slow to compile. I wanted something lighter and faster to compile. So I created enchantum, a header-only C++20 library for enum reflection. Here's how it works under the hood — no macros, no magic — just some carefully wielded compiler quirks and constexpr wizardry.
+[magic_enum](https://github.com/Neargye/magic_enum) is amazing, however it has one main issue, it is slow to compile. I wanted something lighter and faster to compile. So I created [enchantum](https://github.com/ZXShady/enchantum), a header-only C++20 library for enum reflection. Here's how it works under the hood — no macros — just some carefully wielded compiler quirks and constexpr wizardry.
+
+In this short article I will show you how to implement a simplified implementation of enum to strings.
 
 # Objective
 
@@ -27,7 +29,7 @@ Obviously... no.
 
 # Compiler Signature Hacking
 
-Just like magic_enum, enchantum relies on the same trick: compiler-specific builtins like `__PRETTY_FUNCTION__` for gcc and clang and `__FUNCSIG__` for msvc. These include the full function signature which includes the template parameters at compile time, which we can abuse for our advantage.
+Just like magic_enum, enchantum (and all "reflection" libraries) relies on the same trick: compiler-specific builtins like `__PRETTY_FUNCTION__` for gcc and clang and `__FUNCSIG__` for msvc. These include the full function signature which includes the template parameters at compile time, which we can abuse for our advantage.
 
 ```cpp
 template <auto V>
@@ -56,9 +58,9 @@ std::cout << signature<Fruit::Banana>();
 
 I will be using clang as it is the simplest.
 
-As you can see from the compiler output every time an enum is placed in the template parameter you get a the enumerator name.
+As you can see from the compiler output every time an enum is placed in the template parameter you get the enumerator name.
 
-What happens if we input an invalid enum member in `signature` template parameter?
+What happens if we input an invalid enumerator in `signature` template parameter?
 
 ```cpp
 std::cout << signature<static_cast<Fruit>(5)>();
@@ -74,7 +76,7 @@ The output shows a C-style cast (ew) — "Fruit::Banana" gives us a clean name, 
 
 While quirky, this distinction is useful: if the compiler shows the value with a cast, we can treat it as not a valid enum member, this also tells us that LLVM codebase is full of C elitists that prefer C casts to C++ ones.
 
-So how do we get the strings? well, we need to iterate over every single value possible in the enum which for `Fruit` with an underlying type of `int` that is wait let me get my calculator... it is 4,294,967,296, `2^32` compiling a template `2^32` times is sure a way to blow up your compiler, so sadly we have to restrict ourselves to a much finer range like `-5` to `5`
+So how do we get the strings? well, we need to iterate over every single value possible in the enum which for `Fruit` with an underlying type of `int` that is wait let me get my calculator... it is 4,294,967,296, `2^32` compiling a template `2^32` times is sure a way to blow up your compiler, so we have to restrict ourselves to a much finer range like `-5` to `5` and this is where magic_enum and enchantum gets this limitation from.
 
 Using `std::index_sequence` we can implement it quite easily with C++20 explicit template lamdbas
 
@@ -95,20 +97,20 @@ This generates a compile-time array of the signatures for each possible enum val
 the table is like this if we print every element
 
 ```cpp
-std::string_view signature() [V = (Fruit)-5]
-std::string_view signature() [V = (Fruit)-4]
-std::string_view signature() [V = (Fruit)-3]
-std::string_view signature() [V = (Fruit)-2]
-std::string_view signature() [V = (Fruit)-1]
-std::string_view signature() [V = (Fruit)0]
-std::string_view signature() [V = Fruit::Apple]
-std::string_view signature() [V = Fruit::Banana]
-std::string_view signature() [V = (Fruit)3]
-std::string_view signature() [V = Fruit::Pear]
-std::string_view signature() [V = (Fruit)5]
+auto signature() [V = (Fruit)-5]
+auto signature() [V = (Fruit)-4]
+auto signature() [V = (Fruit)-3]
+auto signature() [V = (Fruit)-2]
+auto signature() [V = (Fruit)-1]
+auto signature() [V = (Fruit)0]
+auto signature() [V = Fruit::Apple]
+auto signature() [V = Fruit::Banana]
+auto signature() [V = (Fruit)3]
+auto signature() [V = Fruit::Pear]
+auto signature() [V = (Fruit)5]
 ```
 
-We just need to extract our strings it is pretty simple if the part after "V =" is '(' then it is not a valid enum otherwise it is valid we can modify our function `signature` to skip unnecessary parts
+We just need to extract those strings it is pretty simple if the part after "V =" is '(' then it is not a valid enum otherwise it is valid we can modify our function `signature` to skip unnecessary parts
 
 # Cleaning Up the Signature
 
@@ -147,13 +149,17 @@ constexpr auto entries = [](){
     constexpr auto& table = string_table<E>;
     std::array<std::pair<E,std::string_view>,table.size()> entries_return{};
     for(std::size_t i=0;i< table.size();++i){
+        // (Fruit)0
+        // Fruit::Apple
+        // if it is not a cast
         if(table[i].front() != '(')
         {
-            // Fruit::Apple]
-            std::size_t pos = table[i].find("::") + 2; // skip the colons
-            auto& [enum_value,string] = entries_return[i]; // structured bindings for readability
+            // get past the colons
+            std::size_t namepos = table[i].find("::") + 2; 
+            auto& [enum_value,name] = entries_return[i]; // structured bindings for readability
             enum_value = static_cast<E>(i + Min);
-            string = table[i].substr(pos);
+            // get the string which is the enumerator name
+            name = table[i].substr(namepos);
         }
     }
     return entries_return;
@@ -161,7 +167,7 @@ constexpr auto entries = [](){
 ```
 
 
-Printing the it using
+Printing `entries` using
 ```cpp
 for(auto [e,s] :entries<Fruit>)
 {
@@ -195,6 +201,7 @@ It works!
 
 But... we’re storing a lot of empty string_views for invalid entries. That bloats our binary and requires extra checks for empty strings.
 Let’s trim those out by computing a minimal size we need for the `entries` array:
+
 ```cpp
 template<typename E>
 constexpr auto entries = [](){
@@ -210,16 +217,19 @@ constexpr auto entries = [](){
 
     // second use it to be the array length
     std::array<std::pair<E,std::string_view>,minimal_size> entries_return{};
-    std::size_t entry_index =0;
+    std::size_t entry_index = 0;
         constexpr auto& table = string_table<E>;
     for(std::size_t i=0;i< table.size();++i){
         if(table[i].front() != '(')
         {
-            // Fruit::Apple]
-            std::size_t pos = table[i].find("::") + 2; // skip the colons
-            auto& [enum_value,string] = entries_return[entry_index]; // structured bindings for readability
-            enum_value = static_cast<E>(i + Min); // adjust the range from [0,size()] to [Min,size()+Min]
-            string = table[i].substr(pos);
+            // (Fruit)0
+            // Fruit::Apple
+            // get past the colons
+            std::size_t namepos = table[i].find("::") + 2;
+            auto& [enum_value,name] = entries_return[entry_index]; // structured bindings for readability
+            enum_value = static_cast<E>(i + Min);
+            // get the string which is the enumerator name it is always after the colons 
+            name = table[i].substr(namepos);
             ++entry_index;
         }
     }
@@ -254,7 +264,7 @@ int main()
 }
 ```
 
-We surprisngly got only.
+We only get.
 
 ```
 Giraffe
@@ -267,7 +277,7 @@ constexpr int Min = -100;
 constexpr int Max = 100;
 ```
 
-We now correcly get printed
+We now correctly get printed
 
 ```
 Giraffe
@@ -278,11 +288,11 @@ Elephant
 
 Congrats! with some tricks we got basic enum reflection but wait there is more to cover.
 
-You might be tempted to increase the `Min` and `Max` ranges so you don't have to worry about missing entries, but this comes with a cost,compile times will explode.
+You might be tempted to increase the `Min` and `Max` ranges so you don't have to worry about missing entries, but this comes with a cost,compile times will explode try it with range of -1000 to 1000 and time it.
 
-How can we fix this? Well lets see the core issue we have, the expensive part is in `string_table` it requires `Max-Min+1` individual template instantations so with -100,100 range we get 201 instantations per enum type per translation unit this can make builds really slow so you have to balance between correctness (get every enum reflected) and compile times.
+How can we fix this? Well lets see the core issue we have, the expensive part is in `string_table` it requires `Max-Min+1` individual template instantations so with (-100,100) as the range we get 201 instantations per enum type per translation unit this can make builds really slow so you have to balance between correctness (get every enum reflected) and compile times.
 
-Can we reduce the required instantations? Yes we can why don't we try to print multiple template parameters?
+Can we reduce the required instantations? Yes we can why don't we try to print _multiple_ template parameters?
 
 ```cpp
 template <auto... Vs> // now variadic
@@ -325,18 +335,20 @@ constexpr auto string_table = []<std::size_t...Idx>(std::index_sequence<Idx...>)
 ```
 
 
-Now lets try to parse this it is more complicated due to the fact we don't know the end of the string it is more convulated.
+Now lets try to parse this it is more complicated due to the fact we don't know the end of the string it is harder.
 
 Printing the single string out gives us.
 
-`(Fruit)-5, (Fruit)-4, (Fruit)-3, (Fruit)-2, (Fruit)-1, (Fruit)0, Fruit::Apple, Fruit::Banana, (Fruit)3, Fruit::Pear, (Fruit)5`
+```
+(Fruit)-5, (Fruit)-4, (Fruit)-3, (Fruit)-2, (Fruit)-1, (Fruit)0, Fruit::Apple, Fruit::Banana, (Fruit)3, Fruit::Pear, (Fruit)5
+```
 
 Let's try to figure out a way to parse it.
-By observing it: the values are seperated by commas followed by a space we can use that as the end of the enum name.
+By observing it: the values are seperated by commas followed by a space we can use that as the end of the enumerator name.
 
 
 ```cpp
-// Constexpr std::strlen used to remove magic numbers
+// constexpr std::strlen used to remove magic numbers for readability
 template<std::size_t N>
 constexpr std::size_t c_strlen(const char(&)[N]) {
     return N-1;
@@ -351,9 +363,11 @@ constexpr auto entries = [](){
          std::string_view s = string_table<E>;
          while (!s.empty()) {
              const auto pos = s.find(',');
-             if(s.front() != '(') // if it is not a cast
+             // if it is not a cast
+             if(s.front() != '(') 
                  ++count;
-             if(pos == s.npos) // if we did not find a comma it is the last element
+             // if we did not find a comma it is the last enumerator
+             if(pos == s.npos) 
                  break;
              s.remove_prefix(pos + c_strlen(", ")); // move past ','
          }
@@ -383,18 +397,18 @@ constexpr auto entries = [](){
 }();
 ```
 
-trying it out on [godbolt](https://godbolt.org/z/o6GeK51af) correctly works but however there is an issue if we look at the binary.
+trying it out on [godbolt](https://godbolt.org/z/5qKbob95a) correctly works but however there is an issue if we look at the binary.
 
 ```cpp
 .L.str.1:
-  .asciz "std::string_view signature() [Vs = <(Fruits)-5, (Fruits)-4, (Fruits)-3, (Fruits)-2, (Fruits)-1, Fruits::Banana, Fruits::Pear, (Fruits)2, (Fruits)3, Fruits::Apple, (Fruits)5>]"
+  .asciz "auto signature() [Vs = <(Fruits)-5, (Fruits)-4, (Fruits)-3, (Fruits)-2, (Fruits)-1, Fruits::Banana, Fruits::Pear, (Fruits)2, (Fruits)3, Fruits::Apple, (Fruits)5>]"
 ```
 
-although we only need to store `"Banana"`,`"Pear"`,`"Apple"` we get the entire string stored this is bad for binary sizes and is bloating our binary, how can we fix this?
+although we only need to store `"Banana"`,`"Pear"`,`"Apple"` we get the entire signature string stored this is bad for binary sizes and is bloating our binary, how can we fix this?
 
 # Trimming strings
 
-We can store the required strings in a global static storage constexpr variable and thanks to CNNTP (class non type template parameters)
+We can store only the required strings in a global static storage constexpr variable and thanks to C++20 CNNTP (class non type template parameters)
 it makes it really easy to do so.
 
 
@@ -413,7 +427,9 @@ constexpr auto entries_optimized = [](){
     }();
     // second group the strings into a single array
     constexpr auto grouped_strings = [total_string_length](){
-        std::array<char,total_string_length> strings{};
+       // will hold all of our strings contiguously
+
+     std::array<char,total_string_length> strings{};
         for(std::size_t i =0;auto [e,s] : entries<E>) {
             s.copy(strings.data()+i,s.size());
             i += s.size();
@@ -421,7 +437,8 @@ constexpr auto entries_optimized = [](){
         return strings;
     }();
     // third make grouped_strings have static storage by making a constexpr global variable
-    // copy its value since we don't have static constexpr local variables in constexpr functions until C++26
+    // copy its value since we don't have static constexpr local variables in constexpr functions
+    // until C++26
     constexpr auto& storage = static_storage_for<grouped_strings>;
 
     // fourth make the new entries point to that storage we created
@@ -443,7 +460,7 @@ static_storage_for<std::array<char, 15ul>{"BananaPearApple"}>:
 
 much much better and more optimized. only 15 bytes needed instead of whatever previously was needed
 
-Let's assume that for some reason your `i` key on your keyboard is broken that means sadly that you can't spell out `.size()` member function so you have to resort to `std::strlen` which does not contain `i` 
+Let's assume that for some reason your `i` key on your keyboard is broken that means that you can't spell out `.size()` member function so you have to resort to `std::strlen` which does not contain `i` 
 
 ```cpp
 for(auto [e,s] : entries<E>)
@@ -456,7 +473,7 @@ surprisingly it does not work, because our strings are not null terminated the f
 
 # Null Termination
 
-We modify total_string_length and other local functions to accomdate for the space the null terminator needs 
+We modify `total_string_length` and other local functions to accomdate for the space the null terminator needs 
 
 ```cpp
 template<typename E>
@@ -471,8 +488,8 @@ constexpr auto entries_optimized = [](){
     }();
     // second group the strings into a single array
     constexpr auto grouped_strings = [total_string_length](){
-        // The array is initialized to zero (the null terminator)
-        // the gaps we skip is filled with them automaticly.
+        // The array valued are all initialized to zero (the null terminator)
+        // the gaps we skip is filled with them automaticly so no ned to explicitly set them
         std::array<char,total_string_length> strings{};
         for(std::size_t i =0;auto [e,s] : entries<E>) {
             s.copy(strings.data()+i,s.size());
@@ -509,8 +526,8 @@ much better and yes the "Apple" is null terminated but it does not show up here 
 This is a simplified implementation of enchantum logic, this implementation does not currently handle
 
 1. Namespaced enums or enums in classes
-2. C style enums
-
+2. C style enums (unscoped enums)
+3. Other compilers than clang
 Here is final code
 
 [godbolt](https://godbolt.org/z/cxjdTdzaj)
