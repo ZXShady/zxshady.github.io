@@ -214,7 +214,7 @@ const auto& get(magic_variant<B> const& v)
 Now implementing the destructor it is simple by using a dispatch table to the destructrs of each member.
 
 ```cpp
-void destroy() const { 
+void destroy() { 
     constexpr static auto dtors =
     []<std::size_t... Is>(std::index_sequence<Is...>){
         return std::array<void(*)(magic_variant&),impl_members().size()>{
