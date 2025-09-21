@@ -16,7 +16,7 @@ One of the library features introduced in C++17  was `std::variant`: a type-safe
 
 But its biggest downsides? The members of the variant are unnamed. Accessing them means using `std::get<T>` or `std::visit`, which can feel clunky and less intuitive
 
-Why not both? Why do we hace to sacrifice one for the other?
+Why not both? Why do we have to sacrifice one (readability) for the other (type safety)?
 
 Imagine combining the type safety of `std::variant` and the clarity of C unions named members:
 
@@ -142,7 +142,7 @@ Now we need a way to construct the appropaite member of `impl` and set the discr
 
 To do that, we need a way to map a type to its index in the blueprint struct.
 
-Before reflection this would be annoying you need to use typelists and meta functions with alot of `template` keywords sprinkled around, alot of things but with reflection it is just normal C++ code.
+Before reflection this would be annoying you need to use typelists and meta functions with alot of `template` and `typename` keywords sprinkled around, alot of things but with reflection it is just normal C++ code.
 
 ```cpp
 // Get the index of a type in a list of members
@@ -211,7 +211,7 @@ const auto& get(magic_variant<B> const& v)
 
 ```
 
-Now implementing the destructor it is simple by using a dispatch table to the destructrs of each member.
+Now implementing the destructor it is simple by using a dispatch table to the destructors of each member.
 
 ```cpp
 void destroy() { 
