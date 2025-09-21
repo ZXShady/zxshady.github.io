@@ -10,13 +10,13 @@ As you may have heard, [reflection](https://www.open-std.org/jtc1/sc22/wg21/docs
 
 I was one in both groups, just waiting for the day I could easily convert enums to strings and cursing what is yet the `8`th spelling of `is_const` today. But reflection in C++26 opens the door to so much more than just that.
 
-> A Better `std::variant`
+# A Better `std::variant`
 
 One of the library features introduced in C++17  was `std::variant`: a type-safe union. It lets us hold one of several types in a single variable safely.
 
 But its biggest downsides? The members of the variant are unnamed. Accessing them means using `std::get<T>` or `std::visit`, which can feel clunky and less intuitive
 
-Why both?
+Why not both? Why do we hace to sacrifice one for the other?
 
 Imagine combining the type safety of `std::variant` and the clarity of C unions named members:
 
@@ -142,7 +142,7 @@ Now we need a way to construct the appropaite member of `impl` and set the discr
 
 To do that, we need a way to map a type to its index in the blueprint struct.
 
-Before reflection this would be annoying you need to use typelists and meta functions and alot of things but with reflection it is just normal C++ code.
+Before reflection this would be annoying you need to use typelists and meta functions with alot of `template` keywords sprinkled around, alot of things but with reflection it is just normal C++ code.
 
 ```cpp
 // Get the index of a type in a list of members
@@ -270,9 +270,10 @@ if(auto* i = v.i())
 
 But here is the roadblock, `define_aggregate` does not allow for member functions to be defined. this would require C++**29** [token injection](https://github.com/cplusplus/papers/issues/1946).
 
-So is this impossible? well yesn't.
+So is this impossible? 
+   well yesn't.
 
-See, the syntax `a.f()` does not require `f()` to be a function, it may as well be just a member that is a function pointer.
+See, the syntax `a.f()` does not require `f()` to be a member function, it may as well be just a member that is a function pointer.
 
 ```cpp
 template<typename Self>
