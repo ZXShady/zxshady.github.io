@@ -2,9 +2,9 @@
 
 I have implemented UFCS in Clang you can try it here in this [clang fork](https://github.com/ZXShady/llvm-project/tree/ufcs)
 
-
-
 Uniform Function Call Syntax (UFCS) is one of the most discussed features in C++.
+
+[](#)
 
 # What is it?
 
@@ -290,30 +290,43 @@ The classic example is the similarity between the purely const interfaces of `st
 
 Member Function       | Shared Overloads
 ----------------------|-----------------
-length()              | 1
-max_size()            | 1
-empty()               | 1
-cbegin() / cend()     | 1
-crbegin() / crend()   | 1
-copy()                | 1
-substr()              | 1
-starts_with()         | 4
-ends_with()           | 4
-compare()             | 9
-find()                | 4
-rfind()               | 4
-find_first_of()       | 4
-find_last_of()        | 4
-find_first_not_of()   | 4
-find_last_not_of()    | 4
+`length()`              | 1
+`max_size()`            | 1
+`empty()`               | 1
+`cbegin() / cend()`     | 1
+`crbegin() / crend()`   | 1
+`copy()`                | 1
+`substr()`              | 1
+`starts_with()`         | 4
+`ends_with()`           | 4
+`compare()`             | 9
+`find()`                | 4
+`rfind()`               | 4
+`find_first_of()`       | 4
+`find_last_of()`        | 4
+`find_first_not_of()`   | 4
+`find_last_not_of()`    | 4
 Total                 | 46 * 2 == 92 OVERLOADS!
 
 Thats 92 overloads! For what is essentialy algorithms already in the C++ standard library like `std::find`,`std::cbegin` and others. This would get worse as the Standard Library ends up with more types with similiar interfaces (e.g. `std::zstring_view`) more duplication will occur and this is bad for compile times and it bloats interfaces and debug builds. It also restricts usability why is `str.length()` fine but not `vector.length()`? why is `str.find('a')` fine, but not `vector.find(42)`? both are containers.
 
+Other example is `value_or` method for `optional` and `expected` this algorithm is completely generic but it currently has to be written 4 times for each of those classes. while UFCS would allow 
+
+```cpp
+template<typename Opt,typename Def>
+auto value_or(Opt&& opt,Def&& def)
+{
+    return opt ? *opt : def;
+}
+```
+
+This covers everything pointer-like there is no reason why `value_or` should be a member function other than the ability to chain it being a member loses the ability for it to apply to anything *optional-like* like pointers, `unique_ptr`s,`shared_ptr`s and such.
+
 ## Less workarounds
 
-Currently `std::ranges` require an insane amount of machinary to function with the `|` operator, which puts a burden on library devs and on the compiler which tries to optimize this machinary while UFCS would essentially be a builtin pipe operator.
+Currently `std::ranges` require an insane amount of machinery to function with the `|` operator, which puts a burden on library devs and on the compiler which tries to optimize this machinery while UFCS would essentially be a builtin pipe operator.
 
+Example taken from [cppreference](https://en.cppreference.com/w/cpp/ranges.html)
 ```cpp
 auto const ints = {0, 1, 2, 3, 4, 5};
 auto even = [](int i) { return 0 == i % 2; };
@@ -335,12 +348,13 @@ For all its appeal, UFCS is not a trivial feature at all to add to C++.
 
 The main objections are from what I see online are.
 
-1. unpredictable lookup complexity: C++ name lookup is already difficult
-2. overload resolution ambiguity: what if both a member and a free function exist?
+1. Unpredictable lookup complexity: C++ name lookup is already difficult
+2. Overload resolution ambiguity: what if both a member and a free function exist?
 3. API ownership confusion and unstable APIs: `x.f()` suggests `f` belongs to the type, even if it actually comes from some unrelated namespace.
-4. readability concerns: today, `x.f()` and `f(x)` may communicate different design intent which I think is bad design even without UFCS.
+4. Readability concerns: today, `x.f()` and `f(x)` may communicate different design intent which I think is bad design even without UFCS.
+5. Typos with pointers `a.f()` and `a->f()` can mean different things, this is a weak point since this already happens with anything that has an overloaded `->` operator like `unique_ptr`,`optional` UFCS would just make it more uniform and allow pointers to have the same power.
 
-Most is taken from online=comments and from this [UFCS is a breaking change](https://isocpp.org/files/papers/P3027R0.html) paper.
+Most is taken from online comments and from this [UFCS is a breaking change](https://isocpp.org/files/papers/P3027R0.html) paper.
 
 These concerns are real. C++ is not a small language, and any feature that touches lookup and overload resolution is dangerous territory. C++ is not a playground
 
@@ -439,14 +453,14 @@ I used VsCodium with Clangd to edit the clang codebase because Visual Studio kep
 
 1. The flags
 
-I have 3 flags as explained `-fufcs=disabled|herb|extensions` so I need to make the compiler recognize them so I searched for some flags by doing `clang --help` and taking a `-f` flag and searching for it in the codebase like `-fcxx-exceptions`  and I found `Options/Options.td` file which contains all the options so I went ahead copied a flag and edited it to have my new ufcs flag and I had to add an new enum to `Basic/LangOptions.h` 
+I have 3 flags as explained `-fufcs=disabled|herb|extensions` so I need to make the compiler recognize them so I searched for some flags by doing `clang --help` and taking a `-f` flag and searching for it in the codebase like `-fcxx-exceptions`  and I found `Options/Options.td` file which contains all the options so I went ahead copied a flag and edited it to have my new UFCS flag and I had to add an new `enum` to `Basic/LangOptions.h` 
 
 ```cpp
 enum class UFCSModeKind : uint8_t {
     Disabled,
     Extensions,
     Herb
-  };
+};
 ```
 
 
@@ -474,7 +488,7 @@ So I needed  for when I have `-fufcs=extensions` to allow `this` qualifier on no
 void foo(this C&);
 ```
 
-This was simple enough to implement I had to go into the parser and just put an if check that silences this when using extensions mode. but first I needed to know where this error is emitted so I went ahead and copied the error message and searched and found that the error DiagID is `err_explicit_object_parameter_nonmember` in `Basic/DiagnosticSemaKinds.td` so I went again and searched for this and found the file `SemaType.cpp` so I went ahead and put a simple if check to not emit it. now that was simple.
+This was simple enough to implement I had to go into the parser and just put an if check that silences this when using extensions mode. but first I needed to know where this error is emitted so I went ahead and copied the error message and searched and found that the error `DiagID` is `err_explicit_object_parameter_nonmember` in `Basic/DiagnosticSemaKinds.td` so I went again and searched for this and found the file `SemaType.cpp` so I went ahead and put a simple if check to not emit it. now that was simple.
 
 3. Sema
 
@@ -485,14 +499,14 @@ This is where things go from nice to welcome to hell. I had an insane amount of 
 
 The strat is
 
-1. Try normal member lookup `a.foo(args...)`
-2. If that fails (or is inaccessible), try UFCS:
-    which does 1. Rewrite to `foo(a, args...)`
-               2. Perform constrained lookup for `foo`
-               3. Run overload resolution again
+- Try normal member lookup `a.foo(args...)`
+- If that fails (or is inaccessible), try UFCS: which does 
+    - Rewrite to `foo(a, args...)`
+    - Perform constrained lookup for `foo`
+    - Run overload resolution again
 
 
-After digging through the codebase, the key function responsible for this member function call expressiones turned out to be `Sema::BuildCallToMemberFunction` in `SemaOverload.cpp`
+After digging through the codebase, the key function responsible for this member function call expressions turned out to be `Sema::BuildCallToMemberFunction` in `SemaOverload.cpp`
 
 First, I needed to construct the equivalent of `foo(a, args...)`
 
@@ -531,7 +545,7 @@ switch (CandidateSet.BestViableFunction(...)) {
 
 For all of these 3 cases marked we need to perform overload resolution again, 
 
-For the success case, this case is entered when overload resolution finds an accessible or inaccessible member function so yes a private uncallable function goes here, so I needed to detect the case when it is private and try the UFCS candidates.
+For the success case, this case is entered when overload resolution finds an accessible or inaccessible member function so yes a `private` uncallable function goes here, so I needed to detect the case when it is `private` and try the UFCS candidates.
 
 
 ```cpp
@@ -602,8 +616,80 @@ This is not the entire code needed to make it work  since I suck at explaining s
 
 
 
+
+
+## The sad part
+
+Although my lookup scheme is very conservative and predictable than other papers. despite that it STILL breaks old code and prevents it from compiling which made me so disappointed and made me stop even considering proposing this new UFCS lookup scheme which made me very sad
+
+the code that broke was `std::begin`
+the example is this
+
+```cpp
+namespace std {
+    template<typename T,int N>
+    T* begin(T(&arr)[N]);
+    
+    template<typename T>
+    auto begin(T& cont) -> decltype(cont.begin());
+
+    struct SomeStdType {};
+}
+
+int main() 
+{
+    std::SomeStdType arr[10];
+    std::begin(arr);
+/*
+ufcs.cpp:6:42: fatal error: recursive template instantiation exceeded maximum depth of 3
+    6 |     auto begin(T& cont) -> decltype(cont.begin());
+      |                                          ^
+ufcs.cpp:6:42: note: while substituting deduced template arguments into function template 'begin'
+      [with T = std::SomeStdType[10]]
+ufcs.cpp:6:42: note: while substituting deduced template arguments into function template 'begin'
+      [with T = std::SomeStdType[10]]
+ufcs.cpp:6:42: note: while substituting deduced template arguments into function template 'begin'
+      [with T = std::SomeStdType[10]]
+ufcs.cpp:14:5: note: while substituting deduced template arguments into function template 'begin'
+      [with T = std::SomeStdType[10]]
+   14 |     std::begin(arr); // infinite loop
+      |     ^
+ufcs.cpp:6:42: note: use -ftemplate-depth=N to increase recursive template instantiation depth
+    6 |     auto begin(T& cont) -> decltype(cont.begin());
+      |                                          ^
+1 error generated.
+*/
+}
+```
+
+It seems unintuitive at first since the 1st one is just straight up best overload. but C++ still needs to instanstiate both overloads to see which could be better so it instanstiate it and recurses infinitly.
+
+`std::begin` was written with mind that `cont.begin()` will **always** call a member function and never a free function so it does not just recurse forever. this could actually be fixed by doing `cont.T::begin()` which forces a member lookup only, but that is not the point. It broke code you are now forced to change what used to be perfectly fine code to adhere to this new change which is unacceptable. C++ is a massive language with many lines of code and forcing a massive breaking change isn't practical and will stop people from updating.
+
 ## The end
 
-Special Thanks to [Vittorio Romeo](https://github.com/vittorioromeo), [Eczbek](https://github.com/Eczbek), [Terens]() for motivating me to make this fork although it wasn't the success I had dreamt of it was still fun (mostly).
+I thought that I finally cracked the code that I found a lookup scheme that does not destroy the universe I only realized that I failed when I finished my implementation, if you have any ideas to fix the above issue so it can actually be proposed please let me know in the comments but I don't have any solutions.
 
-Thaks for reading my article.
+I think now that UFCS is bassicly impossible to get into C++ now it could have got into it from the start but it is too late now. I don't think extension methods can work either they would have the same issues.
+
+The commitee has rejected alternatives like the [pizza operator](https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2020/p2011r0.html) `|>` by Barry Revzin and Colby Pike, which thinking about it now seems to be the only practical alternative; the others breaks code.
+
+Let this article be a reminder for anyone proposing an idea that an implementation for ideas is **always** needed nothing beats actually using your fork to compile code than just writing a paper you discover way more edge cases.
+
+
+Special Thanks to [Vittorio Romeo](https://github.com/vittorioromeo), [Eczbek](https://github.com/Eczbek),[Terens](https://github.com/TerensTare) , and [QuStar](https://www.reddit.com/user/qustar_/) for keeping me motiviated making this fork.
+
+Thanks for reading my article.
+
+## Resources
+
+Herb Sutter's UFCS Proposal [P3021R0](https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2023/p3021r0.pdf).
+UFCS is a Breaking Change [P3027R0](https://isocpp.org/files/papers/P3027R0.html): The "rebuttal" paper that explains why the feature is so dangerous for existing codebases.
+
+The Pipeline/Pizza Operator [P2011R0](https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2020/p2011r0.html).
+
+[Barry Revzin's History of UFCS](https://brevzin.github.io/c++/2019/04/13/ufcs-history/).
+
+Herb Sutter's GotW [#84](http://www.gotw.ca/gotw/084.htm).
+
+And the many reddit posts, google group discussions, stdproposals about UFCS.
