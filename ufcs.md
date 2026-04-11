@@ -1,5 +1,7 @@
 # I implemented UFCS inside clang 
 
+I have implemented UFCS in Clang you can try it here in this [clang fork](https://github.com/ZXShady/llvm-project/tree/ufcs)
+
 
 
 Uniform Function Call Syntax (UFCS) is one of the most discussed features in C++.
@@ -12,6 +14,20 @@ In C++ we generally have two ways to perform an operation on an object
 2. Non-member Free Functions: `function(object, args...)`
 
 UFCS is a language feature that would allow these one syntax to be call  the other. If you wrote `x.f()`, the compiler would first look for a member function named `f`. If it didn't find one, it would look for a free function `f(x)`.
+
+Example:
+
+```cpp
+
+class Foo {};
+void do_thing(Foo f,int i);
+
+Foo f;
+do_thing(f,42);
+
+// with UFCS
+f.do_thing(42); 
+```
 
 # Why is it needed?
 
@@ -94,8 +110,6 @@ public:
     File(const char* path);
     size_t length() const;
     void read(void* buf,size_t len);
-private:
-    void* Impl; // per os implementation
 };
 }
 ```
@@ -163,16 +177,12 @@ public:
     T read_object();
     template<typename T>
     std::optional<T> try_read();
-    
-private:
-    void* Impl; // per os implementation
 };
 }
 ```
 
 ```cpp
 #include <myfile.hpp>
-// #include <myfile_utils.hpp> does not exist anymore
 
 char buf[20];
 // uniform usage
@@ -217,12 +227,13 @@ But you could just as well make it a free `friend` function,
 
 ```cpp
 class Data {
-    friend size_t size(Data& self){
-        return self.m_size;
-    }
+    friend size_t size(Data& self);
     size_t m_size;
 };
-size_t size(Data& self);
+size_t size(Data& self) 
+{
+    return self.m_size;
+}
 
 ```
 
@@ -299,6 +310,25 @@ Total                 | 46 * 2 == 92 OVERLOADS!
 
 Thats 92 overloads! For what is essentialy algorithms already in the C++ standard library like `std::find`,`std::cbegin` and others. This would get worse as the Standard Library ends up with more types with similiar interfaces (e.g. `std::zstring_view`) more duplication will occur and this is bad for compile times and it bloats interfaces and debug builds. It also restricts usability why is `str.length()` fine but not `vector.length()`? why is `str.find('a')` fine, but not `vector.find(42)`? both are containers.
 
+## Less workarounds
+
+Currently `std::ranges` require an insane amount of machinary to function with the `|` operator, which puts a burden on library devs and on the compiler which tries to optimize this machinary while UFCS would essentially be a builtin pipe operator.
+
+```cpp
+auto const ints = {0, 1, 2, 3, 4, 5};
+auto even = [](int i) { return 0 == i % 2; };
+auto square = [](int i) { return i * i; };
+
+// functional syntax, hard to read inside out reading
+std::views::transform(std::views::filter(ints, even), square)
+
+// English left-to-right reading but causes slower compilation and debug builds
+ints | std::views::filter(even) | std::views::transform(square)
+
+// English left-to-right reading but as fast as the functional syntax
+ints.std::views::filter(even).std::views::transform(square)
+
+```
 # Why isn't it here yet?
 
 For all its appeal, UFCS is not a trivial feature at all to add to C++.
@@ -393,10 +423,187 @@ namespace X {
 ```
 
 
+## Implemenation 
 
+The lookup scheme from [Barry revzin post](https://brevzin.github.io/c++/2019/04/13/ufcs-history/) for Candidiate Set is CS:MemberFindsFree and for Overlord Resolution it is OR:TwoRoundsMemberFirst
+
+
+### Why clang?
+
+Because this is my second time actually messing with it so I am a bit familiar and I am on windows not a linux distro so I don't want to face the pain that is MingW, and the GCC codebase in my eyes is less clean than Clang.
+
+
+### Changes made
+
+I used VsCodium with Clangd to edit the clang codebase because Visual Studio kept crashing when I opened the solution.
+
+1. The flags
+
+I have 3 flags as explained `-fufcs=disabled|herb|extensions` so I need to make the compiler recognize them so I searched for some flags by doing `clang --help` and taking a `-f` flag and searching for it in the codebase like `-fcxx-exceptions`  and I found `Options/Options.td` file which contains all the options so I went ahead copied a flag and edited it to have my new ufcs flag and I had to add an new enum to `Basic/LangOptions.h` 
+
+```cpp
+enum class UFCSModeKind : uint8_t {
+    Disabled,
+    Extensions,
+    Herb
+  };
+```
+
+
+```hs
+def fufcs_EQ : Joined<["-"], "fufcs=">, Group<f_Group>,
+  Visibility<[ClangOption, CC1Option]>,
+  HelpText<"Control UFCS behavior: 'extensions' enables C#-style explicit 'this' parameters; "
+           "'herb' enables calling any free function with member syntax">,
+  Values<"disabled,extensions,herb">,
+  NormalizedValuesScope<"LangOptions">, 
+  NormalizedValues<["UFCSModeKind::Disabled", "UFCSModeKind::Extensions", "UFCSModeKind::Herb"]>,
+  MarshallingInfoEnum<LangOpts<"UFCSMode">, "UFCSModeKind::Disabled">;
+```
+
+I had to as well edit other files you can look at the commit history if you want.
+
+but this was the simple part now we need to go to the harder parts.
+
+2. Parser
+
+So I needed  for when I have `-fufcs=extensions` to allow `this` qualifier on normal functions
+
+```cpp
+// error: an explicit object parameter cannot appear in a non-member function
+void foo(this C&);
+```
+
+This was simple enough to implement I had to go into the parser and just put an if check that silences this when using extensions mode. but first I needed to know where this error is emitted so I went ahead and copied the error message and searched and found that the error DiagID is `err_explicit_object_parameter_nonmember` in `Basic/DiagnosticSemaKinds.td` so I went again and searched for this and found the file `SemaType.cpp` so I went ahead and put a simple if check to not emit it. now that was simple.
+
+3. Sema
+
+Now to the fun part actually implementing UFCS.
+
+This is where things go from nice to welcome to hell. I had an insane amount of crashes while doing this part that drove me insane along with the insane compilation times that drove me even crazier eveyr little change took like 40 seconds to do.
+
+
+The strat is
+
+1. Try normal member lookup `a.foo(args...)`
+2. If that fails (or is inaccessible), try UFCS:
+    which does 1. Rewrite to `foo(a, args...)`
+               2. Perform constrained lookup for `foo`
+               3. Run overload resolution again
+
+
+After digging through the codebase, the key function responsible for this member function call expressiones turned out to be `Sema::BuildCallToMemberFunction` in `SemaOverload.cpp`
+
+First, I needed to construct the equivalent of `foo(a, args...)`
+
+So I created a list. Then inserted the object.
+```cpp
+SmallVector<Expr *, 8> ArgsWithMember;
+Expr *Base = MemExpr->getBase();
+ArgsWithMember.push_back(Base);
+ArgsWithMember.append(Args.begin(), Args.end());
+```
+
+Since my overload resolution is 2 step, try members then free I needed two overload candidate sets
+
+```cpp
+OverloadCandidateSet CandidateSet;      // normal members
+OverloadCandidateSet UFCSCandidateSet;  // free functions
+```
+
+I then added functions to the UFCSCandidateSet `AddOverloadCandidate(FuncDecl, ..., ArgsWithMember, UFCSCandidateSet, ...)` and such. Notice the use of `ArgsWithMember`, not `Args`.
+
+Now the logic is mostly copied from the existing code and slightly edited.
+
+
+```cpp
+switch (CandidateSet.BestViableFunction(...)) {
+    case OR_Success: // #1
+        ...
+    case OR_No_Viable_Function: // #2
+        ...
+    case OR_Ambiguous:
+        ...
+    case OR_Deleted: // #3
+        ...
+}
+```
+
+For all of these 3 cases marked we need to perform overload resolution again, 
+
+For the success case, this case is entered when overload resolution finds an accessible or inaccessible member function so yes a private uncallable function goes here, so I needed to detect the case when it is private and try the UFCS candidates.
+
+
+```cpp
+if (IsPrivate(ChosenCandidate) && TryUFCSFallback())
+    Success = true; 
+```
+
+implementing `IsPrivate` was simple 
+
+```cpp
+const auto IsPrivate = [&](const DeclAccessPair &FoundDecl) -> bool {
+    const SFINAETrap Trap(*this, true);
+    return CheckUnresolvedMemberAccess(UnresExpr, FoundDecl) != AR_accessible;
+};
+```
+
+The `SFINAETrap` is an RAII class that from my understanding captures all errors silences them and if any error is emitted it does a subsitutation failure.
+
+
+Now to implement to `TryUFCSFallback`
+
+```cpp
+const auto TryUFCSFallback = [&]() -> bool {
+      if (getLangOpts().getUFCSMode() == LangOptions::UFCSModeKind::Disabled)
+        return false;
+      // we don't do UFCS lookup for operators they already do something like it
+      if (!UnresExpr->getMemberName().isIdentifier())
+        return false;
+
+      // if the member is explicitly qualified like a.B::foo no UFCS lookup is needed
+      if (UnresExpr->getQualifier())
+        return false;
+      
+      if (ArgsWithMember.empty())
+        return false;
+
+      // fill the UFCSCandidateSet
+      // this is the same function as Sema::AddArgumentDependentLookupCandidates but slightly different in how it looks up functions
+      UFCSADLOnly(*this, UnresExpr->getMemberName(), UnresExpr->getMemberLoc(),{ArgsWithMember[0]}, ArgsWithMember, TemplateArgs, UFCSCandidateSet);
+
+      if (getLangOpts().getUFCSMode() == LangOptions::UFCSModeKind::Extensions) {
+        for (auto &C : UFCSCandidateSet) {
+          // Only bother checking candidates that are currently considered
+          // "good"
+          if (!C.Viable)
+            continue;
+
+          bool hasExplicitThis =
+              (C.Function->getNumParams() > 0 &&
+               C.Function->getParamDecl(0)->isExplicitObjectParameter());
+
+          if (!hasExplicitThis) {
+            C.Viable = false;
+            C.FailureKind = ovl_fail_bad_target;
+          }
+        }
+      }
+      OverloadCandidateSet::iterator UFCSBest;
+      if (UFCSCandidateSet.BestViableFunction(*this, UnresExpr->getBeginLoc(),UFCSBest) == OR_Success) {
+        ChosenCandidate = cast<FunctionDecl>(UFCSBest->Function);
+        return true;
+      }
+      return false;
+    };
+```
+
+This is not the entire code needed to make it work  since I suck at explaining so you might want to look at the commits and ask me on reddit via DMs.
 
 
 
 ## The end
+
+Special Thanks to [Vittorio Romeo](https://github.com/vittorioromeo), [Eczbek](https://github.com/Eczbek), [Terens]() for motivating me to make this fork although it wasn't the success I had dreamt of it was still fun (mostly).
 
 Thaks for reading my article.
