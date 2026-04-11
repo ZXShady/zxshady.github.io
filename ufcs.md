@@ -684,6 +684,7 @@ Thanks for reading my article.
 ## Resources
 
 Herb Sutter's UFCS Proposal [P3021R0](https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2023/p3021r0.pdf).
+
 UFCS is a Breaking Change [P3027R0](https://isocpp.org/files/papers/P3027R0.html): The "rebuttal" paper that explains why the feature is so dangerous for existing codebases.
 
 The Pipeline/Pizza Operator [P2011R0](https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2020/p2011r0.html).
