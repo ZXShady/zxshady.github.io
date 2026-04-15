@@ -1,6 +1,6 @@
 # I implemented UFCS inside clang 
 
-I have implemented UFCS in Clang you can try it here in this [clang fork](https://github.com/ZXShady/llvm-project/tree/ufcs)
+I have implemented UFCS and Extension methods in Clang you can try it here in this [clang fork](https://github.com/ZXShady/llvm-project/tree/ufcs)
 
 Uniform Function Call Syntax (UFCS) is one of the most discussed features in C++.
 
@@ -91,9 +91,9 @@ In IDEs, when typing `object.`. triggers a list of available methods. Free funct
 
 ## Minimal and lean interfaces
 
-Herb Sutter suggests in his awesome Guru of the week series [#84](http://www.gotw.ca/gotw/084.htm) and that if a function can be implemented using only the public interface of a class, it should be a non-member function. 
-- Increases encapsulation
-- Allows generic algorithms to work on any object uniformly
+Herb Sutter suggests in his awesome Guru of the week series [#84](http://www.gotw.ca/gotw/084.htm) that if a function can be implemented using only the public interface of a class, it should be a non-member function. It
+- Increases encapsulation.
+- Allows generic algorithms to work on any object uniformly.
 - It keeps class definitions small and readable instead of being 4000 lines long.
 - Less dependencies in the header file class leading to faster compilation times.
 
@@ -142,7 +142,7 @@ std::optional<T> try_read(File& file)
 }
 ```
 
-With just the public API we created 2 much more convienent and powerful abstraction just but now the issue is user side.
+With just the public API we created 2 much more convenient and powerful abstractions just but now the issue is user side.
 
 
 ```cpp
@@ -153,7 +153,8 @@ char buf[20];
 // okay member syntax
 file.read(buf,20); 
 
-// free function syntax, have to specify namespace or rely on C++20 template ADL
+// free function syntax, have to specify namespace
+// or rely on C++20 template ADL
 Object obj = read_object<Object>(file);
 std::optional<Object> obj = filesys::try_read<Object>(file); 
 
@@ -206,7 +207,7 @@ while still allowing users to write the operations with symmetric member functio
 
 ## Arbitrary syntax tax.
 
-In C++, the choice between member and non-member often affects syntax more than semantics.
+In C++ unlike other languages, the choice between member and non-member often affects syntax more than semantics.
 
 A common defense of member functions is:
 
@@ -243,7 +244,7 @@ C++ currently forces a choice between syntax and encapsulation.
 - If you want the dot, you must break encapsulation by putting the function inside the class. 
 - If you want encapsulation, you must suffer the 'free function' API and non uniform usage.
 
-UFCS decouples these two completely independent concerns giving library authors freedom to make the right engineering choice without imposing a syntax penalty on users.
+UFCS decouples these two completely independent and unrelated concerns giving library authors freedom to make the right engineering choice without imposing a syntax penalty on users.
 
 ## Enums/builtins with member functions
 
@@ -308,9 +309,9 @@ Member Function       | Shared Overloads
 `find_last_not_of()`    | 4
 Total                 | 46 * 2 == 92 OVERLOADS!
 
-Thats 92 overloads! For what is essentialy algorithms already in the C++ standard library like `std::find`,`std::cbegin` and others. This would get worse as the Standard Library ends up with more types with similiar interfaces (e.g. `std::zstring_view`) more duplication will occur and this is bad for compile times and it bloats interfaces and debug builds. It also restricts usability why is `str.length()` fine but not `vector.length()`? why is `str.find('a')` fine, but not `vector.find(42)`? both are containers.
+Thats 92 overloads! For what is essentially algorithms already in the C++ standard library like `std::find`,`std::cbegin` and others. This would get worse as the Standard Library ends up with more types with similiar interfaces (e.g. `std::zstring_view`) more duplication will occur and this is bad for compile times and it bloats interfaces and debug builds. It also restricts usability why is `str.length()` fine but not `vector.length()`? why is `str.find('a')` fine, but not `vector.find(42)`? both are containers.
 
-Other example is `value_or` method for `optional` and `expected` this algorithm is completely generic but it currently has to be written 4 times for each of those classes. while UFCS would allow 
+Another example is `value_or` method for `optional` and `expected` this algorithm is completely generic but it currently has to be written 4 times each with the combination of &&,&,const,non-const qualifiers for each of those classes. while UFCS would allow 
 
 ```cpp
 template<typename Opt,typename Def>
@@ -319,6 +320,7 @@ auto value_or(Opt&& opt,Def&& def)
     return opt ? *opt : def;
 }
 ```
+A single function was written no duplication was needed.
 
 This covers everything pointer-like there is no reason why `value_or` should be a member function other than the ability to chain it being a member loses the ability for it to apply to anything *optional-like* like pointers, `unique_ptr`s,`shared_ptr`s and such.
 
@@ -342,6 +344,7 @@ ints | std::views::filter(even) | std::views::transform(square)
 ints.std::views::filter(even).std::views::transform(square)
 
 ```
+
 # Why isn't it here yet?
 
 For all its appeal, UFCS is not a trivial feature at all to add to C++.
@@ -409,9 +412,14 @@ int main() {
 
     zoo(c,tag); // ambigious
     c.zoo(tag); // finds X::zoo
+
+
+    using ::foo;
+    c.foo(); // still calls X::foo, 
+    // it ignores current context of call
 }
 ```
-The lookup is simple, search the class for the member, then its bases for the member, then the namespaces of the class and its bases. Nothing else. No surprises. You control your type's namespace you know the functions inside it
+The lookup is simple, search the class for the member, then its bases for the member, then the namespaces of the class and its bases. Nothing else. No surprises. You control your type's namespace you know the functions inside it.
 
 This can be made even simpler by restricting it to the namespace of `a` only no base classes even, but I think considering base classes is logical since it is part of your API. 
 
@@ -444,12 +452,12 @@ The lookup scheme from [Barry revzin post](https://brevzin.github.io/c++/2019/04
 
 ### Why clang?
 
-Because this is my second time actually messing with it so I am a bit familiar and I am on windows not a linux distro so I don't want to face the pain that is MingW, and the GCC codebase in my eyes is less clean than Clang.
+Because this is my second time actually messing with it so I am a bit familiar, and I am on windows not a linux distro so I don't want to face the pain that is MingW, and the GCC codebase in my eyes is less clean than Clang.
 
 
 ### Changes made
 
-I used VsCodium with Clangd to edit the clang codebase because Visual Studio kept crashing when I opened the solution.
+I used VSCodium with Clangd to edit the clang codebase because Visual Studio kept crashing when I opened the solution.
 
 1. The flags
 
@@ -483,21 +491,22 @@ but this was the simple part now we need to go to the harder parts.
 
 So I needed  for when I have `-fufcs=extensions` to allow `this` qualifier on normal functions
 
+
 ```cpp
 // error: an explicit object parameter cannot appear in a non-member function
 void foo(this C&);
 ```
 
-This was simple enough to implement I had to go into the parser and just put an if check that silences this when using extensions mode. but first I needed to know where this error is emitted so I went ahead and copied the error message and searched and found that the error `DiagID` is `err_explicit_object_parameter_nonmember` in `Basic/DiagnosticSemaKinds.td` so I went again and searched for this and found the file `SemaType.cpp` so I went ahead and put a simple if check to not emit it. now that was simple.
+This was simple enough to implement I had to go into the parser and just put an if check that silences this error when using extensions mode. but first I needed to know where this error is emitted so I went ahead and copied the error message and searched and found that the error `DiagID` is `err_explicit_object_parameter_nonmember` in `Basic/DiagnosticSemaKinds.td` so I went again and searched for this and found the file `SemaType.cpp` so I went ahead and put a simple if check to not emit it. now that was simple.
 
 3. Sema
 
 Now to the fun part actually implementing UFCS.
 
-This is where things go from nice to welcome to hell. I had an insane amount of crashes while doing this part that drove me insane along with the insane compilation times that drove me even crazier eveyr little change took like 40 seconds to do.
+This is where things go from nice to welcome to hell. I had an insane amount of crashes while doing this part that drove me insane along with the insane compilation times that drove me even crazier every little change took like 40 seconds to do.
 
 
-The strat is
+The strategy is
 
 - Try normal member lookup `a.foo(args...)`
 - If that fails (or is inaccessible), try UFCS: which does 
@@ -508,7 +517,7 @@ The strat is
 
 After digging through the codebase, the key function responsible for this member function call expressions turned out to be `Sema::BuildCallToMemberFunction` in `SemaOverload.cpp`
 
-First, I needed to construct the equivalent of `foo(a, args...)`
+First, I needed to construct the argument list equivalent of `foo(a, args...)`
 
 So I created a list. Then inserted the object.
 ```cpp
@@ -518,7 +527,7 @@ ArgsWithMember.push_back(Base);
 ArgsWithMember.append(Args.begin(), Args.end());
 ```
 
-Since my overload resolution is 2 step, try members then free I needed two overload candidate sets
+Since my overload resolution is 2 step, try member function then free functions I needed two overload candidate sets
 
 ```cpp
 OverloadCandidateSet CandidateSet;      // normal members
@@ -527,9 +536,7 @@ OverloadCandidateSet UFCSCandidateSet;  // free functions
 
 I then added functions to the UFCSCandidateSet `AddOverloadCandidate(FuncDecl, ..., ArgsWithMember, UFCSCandidateSet, ...)` and such. Notice the use of `ArgsWithMember`, not `Args`.
 
-Now the logic is mostly copied from the existing code and slightly edited.
-
-
+Now to the heart of overload resolution for members.
 ```cpp
 switch (CandidateSet.BestViableFunction(...)) {
     case OR_Success: // #1
@@ -543,11 +550,11 @@ switch (CandidateSet.BestViableFunction(...)) {
 }
 ```
 
-For all of these 3 cases marked we need to perform overload resolution again, 
+For all of these 3 cases marked we need to perform overload resolution again, I will show for case #1 only to keep it short but the other cases are the same.
 
 For the success case, this case is entered when overload resolution finds an accessible or inaccessible member function so yes a `private` uncallable function goes here, so I needed to detect the case when it is `private` and try the UFCS candidates.
 
-
+We need to do
 ```cpp
 if (IsPrivate(ChosenCandidate) && TryUFCSFallback())
     Success = true; 
@@ -584,7 +591,7 @@ const auto TryUFCSFallback = [&]() -> bool {
 
       // fill the UFCSCandidateSet
       // this is the same function as Sema::AddArgumentDependentLookupCandidates but slightly different in how it looks up functions
-      UFCSADLOnly(*this, UnresExpr->getMemberName(), UnresExpr->getMemberLoc(),{ArgsWithMember[0]}, ArgsWithMember, TemplateArgs, UFCSCandidateSet);
+      UFCSADLOnly(*this, UnresExpr->getMemberName(), UnresExpr->getMemberLoc(),/*SearchNamespacesOf=*/{ArgsWithMember[0]}, ArgsWithMember, TemplateArgs, UFCSCandidateSet);
 
       if (getLangOpts().getUFCSMode() == LangOptions::UFCSModeKind::Extensions) {
         for (auto &C : UFCSCandidateSet) {
@@ -670,7 +677,21 @@ It seems unintuitive at first since the 1st one is just straight up best overloa
 
 I thought that I finally cracked the code that I found a lookup scheme that does not destroy the universe I only realized that I failed when I finished my implementation, if you have any ideas to fix the above issue so it can actually be proposed please let me know in the comments but I don't have any solutions.
 
-I think now that UFCS is bassicly impossible to get into C++ now it could have got into it from the start but it is too late now. I don't think extension methods can work either they would have the same issues.
+I think now that UFCS is bassicly impossible to get into C++ now it could have got into it from the start but it is too late now. I think extension methods can work since they are opt in although they have their issues in that they don't benefit old code and would require libraries to use macros for the opt in
+
+```cpp
+// this is needed to support old versions of library 
+#if cpp29
+#define EXT_OPT_IN this
+#else
+#define EXT_OPT_IN /*nothing*/
+#endif
+
+void foo(EXT_OPT_IN Bar& bar);
+```
+
+But it seems the committee already rejected any extension methods so...
+
 
 The commitee has rejected alternatives like the [pizza operator](https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2020/p2011r0.html) `|>` by Barry Revzin and Colby Pike, which thinking about it now seems to be the only practical alternative; the others breaks code.
 
