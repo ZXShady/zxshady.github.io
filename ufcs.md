@@ -4,8 +4,6 @@ I have implemented UFCS and Extension methods in Clang you can try it here in th
 
 Uniform Function Call Syntax (UFCS) is one of the most discussed features in C++.
 
-[](#)
-
 # What is it?
 
 In C++ we generally have two ways to perform an operation on an object
@@ -416,7 +414,7 @@ int main() {
 
     using ::foo;
     c.foo(); // still calls X::foo, 
-    // it ignores current context of call
+    // it ignores current context of call, the using decl is useless
 }
 ```
 The lookup is simple, search the class for the member, then its bases for the member, then the namespaces of the class and its bases. Nothing else. No surprises. You control your type's namespace you know the functions inside it.
@@ -690,8 +688,18 @@ I think now that UFCS is bassicly impossible to get into C++ now it could have g
 void foo(EXT_OPT_IN Bar& bar);
 ```
 
-But it seems the committee already rejected any extension methods so...
+And what about function objects (or neibloids whatever you call them) like all `std::ranges` algorithms how will you specify that they are extensions?
 
+```cpp
+struct Algo_fn {
+    // This doesn't work as an extension method "firstarg" is the Algo_fn instance!
+    void operator()(this auto&& firstarg);
+};
+
+Algo_fn algo;
+```
+
+So function objects can't be used with member syntax at all under this model. The committee already rejected extension methods anyway, so this path is dead.
 
 The commitee has rejected alternatives like the [pizza operator](https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2020/p2011r0.html) `|>` by Barry Revzin and Colby Pike, which thinking about it now seems to be the only practical alternative; the others breaks code.
 
